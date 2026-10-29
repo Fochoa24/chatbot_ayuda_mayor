@@ -22,6 +22,12 @@
     font-size: 20px;
     -webkit-text-size-adjust: 100%;
   }
+  /* Celulares: la letra sigue grande, pero deja espacio para el contenido. */
+  @media (max-width: 480px) {
+    html {
+      font-size: 17px;
+    }
+  }
   body {
     background: var(--color-paper);
     color: var(--color-ink);

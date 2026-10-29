@@ -18,13 +18,14 @@ export default function ChatMessage({ message, speaking, onSpeak }) {
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div
-        className={`max-w-[92%] rounded-3xl px-5 py-4 text-[1.2rem] leading-relaxed shadow-sm ${
+        className={`min-w-0 max-w-[92%] rounded-3xl px-4 py-3 text-[1.15rem] leading-relaxed shadow-sm sm:px-5 sm:py-4 sm:text-[1.2rem] ${
           isUser ? 'rounded-br-md bg-brand text-white' : 'rounded-bl-md border border-ink/10 bg-card'
         }`}
       >
-        <p className="whitespace-pre-wrap break-words">
+        <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">
           {parts.map((p, i) => (p.type === 'link'
-            ? <span key={i} className={isUser ? '' : 'font-semibold text-brand'}>{p.value}</span>
+            // En el texto basta el nombre del sitio; el botón de abajo lo abre.
+            ? <span key={i} className={isUser ? '' : 'font-semibold text-brand'}>{hostOf(p.value) || p.value}</span>
             : <span key={i}>{p.value}</span>))}
           {message.pending && !message.content && <span className="text-ink-soft">Escribiendo…</span>}
         </p>

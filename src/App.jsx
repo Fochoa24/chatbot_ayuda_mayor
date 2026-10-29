@@ -57,7 +57,8 @@ export default function App() {
     } catch {
       // Ignorar: guardar es solo una comodidad.
     }
-    endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    // Con solo el saludo no se baja: así se lee desde el principio.
+    if (messages.length > 1) endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [messages]);
 
   const ask = async (history) => {
@@ -144,18 +145,20 @@ export default function App() {
 
   return (
     <div className="mx-auto flex h-dvh w-full max-w-2xl flex-col">
-      <header className="flex items-center justify-between gap-3 border-b border-ink/10 bg-paper px-4 py-3">
-        <h1 className="text-[1.5rem] font-extrabold">🤝 Guía Mayor</h1>
+      <header className="flex items-center justify-between gap-2 border-b border-ink/10 bg-paper px-3 py-2 sm:px-4 sm:py-3">
+        <h1 className="whitespace-nowrap text-[1.25rem] font-extrabold sm:text-[1.5rem]">
+          <span className="hidden sm:inline" aria-hidden="true">🤝 </span>Guía Mayor
+        </h1>
         <button
           type="button"
           onClick={restart}
-          className="rounded-2xl border-2 border-ink/20 bg-card px-4 py-2 text-base font-bold"
+          className="shrink-0 whitespace-nowrap rounded-2xl border-2 border-ink/20 bg-card px-3 py-2 text-base font-bold sm:px-4"
         >
           Empezar de nuevo
         </button>
       </header>
 
-      <main className="flex-1 space-y-4 overflow-y-auto px-4 py-5" aria-live="polite">
+      <main className="min-h-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden px-3 py-4 sm:px-4 sm:py-5" aria-live="polite">
         {messages.map((m, i) => (
           <ChatMessage
             key={i}
@@ -172,9 +175,9 @@ export default function App() {
                 key={s.text}
                 type="button"
                 onClick={() => send(s.text)}
-                className="flex min-h-[64px] items-center gap-3 rounded-2xl border-[3px] border-brand bg-card px-5 py-3 text-left text-[1.15rem] font-bold text-brand"
+                className="flex min-h-[60px] items-center gap-3 rounded-2xl border-[3px] border-brand bg-card px-4 py-3 text-left text-[1.15rem] font-bold text-brand sm:px-5"
               >
-                <span className="text-3xl" aria-hidden="true">{s.icon}</span>
+                <span className="shrink-0 text-3xl" aria-hidden="true">{s.icon}</span>
                 {s.text}
               </button>
             ))}
@@ -204,7 +207,7 @@ export default function App() {
         <div ref={endRef} />
       </main>
 
-      <footer className="border-t border-ink/10 bg-paper px-4 pb-4 pt-3">
+      <footer className="border-t border-ink/10 bg-paper px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-4 sm:pb-4">
         {warning && <Notice tone="warn">🔒 {warning}</Notice>}
         <form
           onSubmit={(e) => {
@@ -230,14 +233,14 @@ export default function App() {
             rows={2}
             maxLength={MAX_MESSAGE_CHARS}
             placeholder={listening ? 'Le escucho…' : 'Escriba aquí su pregunta'}
-            className="min-h-[64px] flex-1 resize-none rounded-2xl border-[3px] border-ink/30 bg-card px-4 py-3 text-[1.2rem]"
+            className="min-h-[60px] w-full min-w-0 flex-1 resize-none rounded-2xl border-[3px] border-ink/30 bg-card px-3 py-2 text-[1.1rem] sm:px-4 sm:py-3 sm:text-[1.2rem]"
           />
           {canDictate && (
             <button
               type="button"
               onClick={toggleDictation}
               aria-label={listening ? 'Dejar de escuchar' : 'Hablar en vez de escribir'}
-              className={`flex h-[64px] w-[64px] shrink-0 items-center justify-center rounded-2xl border-[3px] text-3xl ${
+              className={`flex h-[60px] w-[56px] shrink-0 items-center justify-center rounded-2xl border-[3px] text-2xl sm:h-[64px] sm:w-[64px] sm:text-3xl ${
                 listening ? 'border-help bg-help-soft' : 'border-brand bg-card'
               }`}
             >
@@ -247,7 +250,7 @@ export default function App() {
           <button
             type="submit"
             disabled={busy || !input.trim()}
-            className="h-[64px] shrink-0 rounded-2xl bg-brand px-5 text-[1.2rem] font-bold text-white disabled:opacity-50"
+            className="h-[60px] shrink-0 rounded-2xl bg-brand px-4 text-[1.1rem] font-bold text-white disabled:opacity-50 sm:h-[64px] sm:px-5 sm:text-[1.2rem]"
           >
             {busy ? '…' : 'Enviar'}
           </button>
