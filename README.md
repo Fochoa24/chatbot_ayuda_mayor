@@ -1,63 +1,55 @@
 # Guía Mayor
 
-Asistente para que personas mayores hagan trámites en internet, paso a paso.
+Chat que acompaña a personas mayores a hacer cualquier trámite por internet, paso a paso.
 
-**Principio de diseño:** la persona mayor no necesita cuenta, correo ni contraseña de Guía Mayor. Entra y sigue los pasos. Solo el familiar usa Google, para ver el progreso.
+**Principios:** sin cuentas, sin contraseñas de Guía Mayor y sin panel de control familiar. La persona entra, escribe (o dicta) lo que necesita y el asistente la guía.
 
 ## Qué hace
 
-- **Persona mayor (sin login):** elige un trámite (banco, hora médica, AFP), elige la institución y avanza un paso a la vez. Un botón grande abre la página oficial. Puede pedir ayuda: el pedido queda guardado para su familiar.
-- **Familiar (Google):** crea un código de invitación, lo envía por WhatsApp, y ve el progreso y los pedidos de ayuda de las personas vinculadas.
-- **Vinculación:** la persona mayor escribe el código (o llega con `?c=CODIGO`) y queda vinculada.
+- **Chat con letra grande**, un paso a la vez, en lenguaje simple y tratando de "usted".
+- **Botones de inicio** para los trámites más comunes: ClaveÚnica, banco, hora médica, pensión/AFP, cuentas y mensajes sospechosos.
+- **Voz:** dictar el mensaje (🎤) y escuchar las respuestas (🔊), si el navegador lo permite.
+- **Enlaces oficiales como botones grandes.** Si un dato cambia con el tiempo, el asistente lo confirma con búsqueda web, limitada a sitios oficiales (`server/systemPrompt.js` > `OFFICIAL_DOMAINS`).
+- **Protección de datos:** antes de enviar, el navegador bloquea lo que parezca un número de tarjeta o una clave. El asistente tiene instrucciones de nunca pedirlos y de advertir sobre estafas.
 
-Lo que **no** hace: no pide ni guarda claves de bancos o AFP, no hace los trámites por la persona y no envía notificaciones push (el familiar ve los pedidos al abrir su panel).
+Lo que **no** hace: no guarda conversaciones en un servidor, no entra a cuentas ni hace trámites por la persona, no pide claves.
 
-## Stack
+## Arquitectura
 
-React 19 · Vite 8 · Tailwind CSS 4 · Supabase (Postgres + Auth + RLS).
+```
+Navegador (React)  ──POST /api/chat──▶  Función de Vercel (api/chat.js)  ──▶  Claude API
+   conversación en                        valida, limita y transmite
+   sessionStorage                         la respuesta en streaming
+```
+
+- `src/`: interfaz (React 19, Vite 8, Tailwind 4). `src/lib/chat.js` tiene la lógica pura, compartida con el servidor.
+- `server/chatHandler.js`: llama a Claude (`claude-opus-5-5`, esfuerzo `low`, búsqueda web, fallback ante rechazos) y transmite el texto como líneas JSON.
+- `server/systemPrompt.js`: instrucciones del asistente.
+- La clave `ANTHROPIC_API_KEY` vive solo en el servidor.
 
 ## Puesta en marcha local
 
 ```bash
 npm install
-cp .env.example .env      # completar con URL y clave pública de Supabase
-npm run dev
+cp .env.example .env      # completar ANTHROPIC_API_KEY
+npm run dev               # la misma función /api/chat corre dentro de Vite
 ```
 
-Sin `.env` la app arranca en **modo demostración**: el flujo se ve completo, pero nada se guarda.
+Otros comandos: `npm test` (node:test), `npm run lint` (oxlint), `npm run build`.
 
-Otros comandos:
+## Despliegue (Vercel)
 
 ```bash
-npm test      # pruebas de la lógica de pasos (node:test, sin dependencias extra)
-npm run lint  # oxlint
-npm run build
+npx vercel env add ANTHROPIC_API_KEY production
+npx vercel deploy --prod
 ```
 
-## Configurar Supabase
+Recomendado en el panel de Vercel: **Firewall > Rate limiting** para `/api/chat` (por ejemplo, 30 solicitudes cada 5 minutos por IP). El límite en memoria de `chatHandler.js` es solo una primera barrera. También conviene fijar un **límite de gasto mensual** en la consola de Anthropic.
 
-1. Crear el proyecto en Supabase.
-2. **SQL Editor:** ejecutar `supabase/schema.sql` completo.
-3. **Authentication > Providers:**
-   - Activar **Anonymous Sign-Ins** (la persona mayor entra así, sin ver ningún login).
-   - Activar **Google** (solo para familiares). Configurar el Client ID y Secret de Google Cloud y agregar la URL del sitio en *Redirect URLs*.
-4. **Settings > API:** copiar la URL y la clave **publishable/anon** a `.env`. Nunca usar la `service_role` en el frontend.
+## Pendientes antes de difundir
 
-## Seguridad: decisiones clave
-
-- El cliente **no puede cambiar su rol ni sus vínculos**. Las columnas `role` y `links` se protegen con privilegios de columna y RLS. Los cambios pasan por funciones `SECURITY DEFINER` acotadas: `become_family`, `create_invite`, `redeem_invite`.
-- Los códigos de invitación son aleatorios (10 caracteres) y vencen en 7 días.
-- Cada tabla tiene RLS activado. El familiar solo lee a personas con un vínculo activo.
-- `.env` está en `.gitignore`. No versionar claves.
-
-## Pendientes antes de un piloto
-
-Ver también el diagnóstico del proyecto original.
-
-- [ ] **Verificar cada URL** de bancos, clínicas y AFP (`src/data/institutions.js`).
-- [ ] **Revisar el texto de privacidad** (`src/screens/Privacy.jsx`) con un abogado. Definir contacto real.
-- [ ] **Revisar la Ley 21.719** de datos personales (entra en vigencia a fines de 2026) y el registro de consentimiento (`consent_at`).
-- [ ] **Limitar intentos de canje de código** (rate limit) en Supabase, para evitar fuerza bruta.
-- [ ] **Probar con adultos mayores reales** en celular: tamaño de texto, orden de los pasos y claridad de los consejos.
-- [ ] **Confirmar la columna `is_anonymous`** de `auth.users` en tu versión de Supabase (la usa `become_family`).
-- [ ] Definir el modelo de negocio (municipio, institución o familia) antes de escalar.
+- [ ] Revisar el texto de privacidad (`src/screens/Privacy.jsx`) con un abogado (Ley 19.628 y Ley 21.719) y definir un contacto real. Informar que los mensajes se procesan con Anthropic.
+- [ ] Probar el asistente con adultos mayores reales y con casos difíciles: estafas, claves escritas en el chat, trámites poco comunes y preguntas fuera de tema.
+- [ ] Armar un set de evaluación con conversaciones reales (anonimizadas) antes de cambiar el prompt o el modelo.
+- [ ] Configurar el rate limit en Vercel y el límite de gasto en Anthropic.
+- [ ] Revisar el costo por conversación y, si hace falta, el modelo o el esfuerzo.

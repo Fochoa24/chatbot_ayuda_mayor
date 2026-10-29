@@ -1,132 +1,32 @@
-import { supabase } from './supabase';
+// Envía la conversación al asistente y entrega el texto a medida que llega.
 
-// Todas las funciones asumen que isBackendConfigured === true.
-// La UI las llama solo en ese caso.
-
-async function currentUser() {
-  const { data, error } = await supabase.auth.getUser();
-  if (error) throw error;
-  return data.user;
-}
-
-// ---------- Persona mayor (anónima, sin login visible) ----------
-
-export async function ensureElderSession() {
-  const { data: { session } } = await supabase.auth.getSession();
-  if (session) return session.user;
-  const { data, error } = await supabase.auth.signInAnonymously();
-  if (error) throw error;
-  return data.user;
-}
-
-export async function getMyProfile() {
-  const user = await currentUser();
-  if (!user) return null;
-  const { data, error } = await supabase.from('profiles').select('*').eq('id', user.id).single();
-  if (error) throw error;
-  return data;
-}
-
-export async function updateMyProfile(patch) {
-  const user = await currentUser();
-  const { data, error } = await supabase
-    .from('profiles')
-    .update(patch)
-    .eq('id', user.id)
-    .select()
-    .single();
-  if (error) throw error;
-  return data;
-}
-
-export async function createRun({ procedureId, institutionId, totalSteps }) {
-  const user = await currentUser();
-  const { data, error } = await supabase
-    .from('procedure_runs')
-    .insert({
-      user_id: user.id,
-      procedure_id: procedureId,
-      institution_id: institutionId,
-      total_steps: totalSteps,
-    })
-    .select()
-    .single();
-  if (error) throw error;
-  return data;
-}
-
-export async function updateRun(runId, patch) {
-  const { error } = await supabase.from('procedure_runs').update(patch).eq('id', runId);
-  if (error) throw error;
-}
-
-export async function requestHelp({ runId, step }) {
-  const user = await currentUser();
-  const { error } = await supabase
-    .from('help_requests')
-    .insert({ user_id: user.id, run_id: runId, step });
-  if (error) throw error;
-}
-
-export async function redeemInvite(code) {
-  const { data, error } = await supabase.rpc('redeem_invite', { p_code: code });
-  if (error) throw error;
-  return data; // nombre del familiar
-}
-
-// ---------- Familiar (Google) ----------
-
-export async function signInFamilyWithGoogle() {
-  const { error } = await supabase.auth.signInWithOAuth({
-    provider: 'google',
-    options: { redirectTo: `${window.location.origin}/familia` },
+export async function streamReply(messages, { onText, onReset, signal }) {
+  const res = await fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages }),
+    signal,
   });
-  if (error) throw error;
-}
 
-export async function signOutAll() {
-  await supabase.auth.signOut();
-}
+  if (!res.ok || !res.body) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'No pudimos conectarnos. Revise su internet e intente de nuevo.');
+  }
 
-export async function becomeFamily() {
-  const { error } = await supabase.rpc('become_family');
-  if (error) throw error;
-}
-
-export async function createInviteCode() {
-  const { data, error } = await supabase.rpc('create_invite');
-  if (error) throw error;
-  return data;
-}
-
-export async function getFamilyOverview() {
-  const { data: links, error: linksError } = await supabase
-    .from('links')
-    .select('elder_id, created_at');
-  if (linksError) throw linksError;
-
-  const elderIds = links.map((l) => l.elder_id);
-  if (elderIds.length === 0) return [];
-
-  const [profilesRes, runsRes, helpRes] = await Promise.all([
-    supabase.from('profiles').select('id, display_name').in('id', elderIds),
-    supabase.from('procedure_runs').select('*').in('user_id', elderIds).order('started_at', { ascending: false }),
-    supabase.from('help_requests').select('*').in('user_id', elderIds).eq('status', 'open').order('created_at', { ascending: false }),
-  ]);
-  for (const r of [profilesRes, runsRes, helpRes]) if (r.error) throw r.error;
-
-  return elderIds.map((id) => ({
-    id,
-    name: profilesRes.data.find((p) => p.id === id)?.display_name || 'Sin nombre',
-    runs: runsRes.data.filter((r) => r.user_id === id),
-    openHelp: helpRes.data.filter((h) => h.user_id === id),
-  }));
-}
-
-export async function resolveHelp(helpId) {
-  const { error } = await supabase
-    .from('help_requests')
-    .update({ status: 'resolved' })
-    .eq('id', helpId);
-  if (error) throw error;
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += value;
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const event = JSON.parse(line);
+      if (event.t === 'text') onText(event.v);
+      else if (event.t === 'reset') onReset();
+      else if (event.t === 'error') throw new Error(event.v);
+    }
+  }
 }

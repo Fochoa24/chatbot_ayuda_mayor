@@ -7,11 +7,11 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "oxlint",
-    "test": "node --test src/lib/guide.test.js",
+    "test": "node --test src/lib/chat.test.js",
     "preview": "vite preview"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.116.0",
+    "@anthropic-ai/sdk": "^1.3.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
