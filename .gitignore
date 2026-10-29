@@ -1,0 +1,19 @@
+# Dependencias y builds
+node_modules
+dist
+dist-ssr
+*.local
+
+# Secretos: nunca versionar
+.env
+.env.*
+!.env.example
+
+# Logs y editor
+logs
+*.log
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea
+.vercel
