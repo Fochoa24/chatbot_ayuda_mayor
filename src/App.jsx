@@ -1,197 +1,258 @@
-import { useEffect, useState, useCallback } from 'react';
-import { isBackendConfigured } from './lib/supabase';
-import * as api from './lib/api';
-import { getProcedure } from './data/procedures';
-import { INSTITUTIONS } from './data/institutions';
-import { Button, Card, Notice, Screen } from './components/ui';
-import Home from './screens/Home';
-import ChooseProcedure from './screens/ChooseProcedure';
-import Consent from './screens/Consent';
-import Guide from './screens/Guide';
-import Done from './screens/Done';
-import Invite from './screens/Invite';
-import Family from './screens/Family';
+import { useEffect, useRef, useState } from 'react';
+import { streamReply } from './lib/api';
+import { detectSensitive, MAX_MESSAGE_CHARS } from './lib/chat';
+import { canDictate, dictate, speak, stopSpeaking } from './lib/speech';
+import { Notice } from './components/ui';
+import ChatMessage from './components/ChatMessage';
 import Privacy from './screens/Privacy';
 
-// Navegación simple por estado. Sin librería de rutas: pocas pantallas.
-// Rutas reales: "/familia" (panel del familiar) y "/?c=CODIGO" (invitación).
+// Sin cuentas: la conversación vive solo en esta pestaña del navegador.
+const STORAGE_KEY = 'guia-mayor-chat';
 
-export default function App() {
-  const isFamilyPath = window.location.pathname.startsWith('/familia');
-  const inviteParam = new URLSearchParams(window.location.search).get('c') || '';
+const WELCOME = {
+  role: 'assistant',
+  content: 'Hola, soy Guía Mayor. Le ayudo a hacer trámites por internet, paso a paso y con calma.\n\n¿Qué trámite necesita hacer? Puede escribirlo con sus palabras o tocar una de las opciones de abajo.',
+};
 
-  const [screen, setScreen] = useState(() => {
-    if (isFamilyPath) return 'family';
-    if (inviteParam) return 'invite';
-    return 'home';
-  });
-  const [profile, setProfile] = useState(null);
-  const [procedureId, setProcedureId] = useState(null);
-  const [institution, setInstitution] = useState(null);
-  const [run, setRun] = useState(null);
-  const [booting, setBooting] = useState(isBackendConfigured && !isFamilyPath);
-  const [bootError, setBootError] = useState('');
+const SUGGESTIONS = [
+  { icon: '🔑', text: 'Sacar o recuperar mi ClaveÚnica' },
+  { icon: '🏦', text: 'Ver mi cuenta del banco' },
+  { icon: '🩺', text: 'Pedir una hora médica' },
+  { icon: '👵', text: 'Ver mi pensión o mi AFP' },
+  { icon: '💡', text: 'Pagar una cuenta de luz o agua' },
+  { icon: '⚠️', text: 'Me llegó un mensaje o llamada rara' },
+];
 
-  const procedure = procedureId ? getProcedure(procedureId) : null;
+const SENSITIVE_WARNING = {
+  card: 'Eso parece un número de tarjeta. No lo escriba aquí ni se lo dé a nadie: no lo necesitamos para ayudarle.',
+  password: 'Eso parece una clave. Sus claves son solo suyas: escríbalas únicamente en la página oficial, nunca en este chat.',
+};
 
-  // Arranque: la persona mayor entra en silencio, sin pantalla de login.
-  useEffect(() => {
-    if (!isBackendConfigured || isFamilyPath) return;
-    (async () => {
-      try {
-        await api.ensureElderSession();
-        setProfile(await api.getMyProfile());
-      } catch {
-        setBootError('No pudimos conectarnos. Revisa tu internet e intenta de nuevo.');
-      } finally {
-        setBooting(false);
-      }
-    })();
-  }, [isFamilyPath]);
-
-  const hasConsent = !isBackendConfigured || Boolean(profile?.consent_at);
-
-  const startProcedure = useCallback((id) => {
-    setProcedureId(id);
-    setInstitution(null);
-    setScreen(hasConsent ? 'institution' : 'consent');
-  }, [hasConsent]);
-
-  const goHome = useCallback(() => {
-    setScreen('home');
-    setProcedureId(null);
-    setInstitution(null);
-    setRun(null);
-  }, []);
-
-  if (booting) {
-    return (
-      <div className="flex min-h-screen items-center justify-center p-8 text-center">
-        <p className="text-2xl font-bold">Preparando la guía…</p>
-      </div>
-    );
+function loadMessages() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(STORAGE_KEY));
+    if (Array.isArray(saved) && saved.length) return saved;
+  } catch {
+    // Sin almacenamiento disponible: se empieza de cero.
   }
-
-  return (
-    <div className="min-h-screen">
-      {!isBackendConfigured && (
-        <div className="mx-auto max-w-xl px-4 pt-3">
-          <Notice tone="warn">
-            Modo demostración: los trámites no se guardan y la vinculación con familiares no está disponible.
-          </Notice>
-        </div>
-      )}
-      {bootError && (
-        <Screen>
-          <Notice tone="error">{bootError}</Notice>
-        </Screen>
-      )}
-
-      {!bootError && screen === 'home' && (
-        <Home
-          name={profile?.display_name}
-          onProcedures={() => setScreen('procedures')}
-          onInvite={() => setScreen('invite')}
-          onFamily={() => { window.location.href = '/familia'; }}
-          onPrivacy={() => setScreen('privacy')}
-        />
-      )}
-
-      {!bootError && screen === 'procedures' && (
-        <ChooseProcedure onBack={goHome} onPick={startProcedure} />
-      )}
-
-      {!bootError && screen === 'consent' && (
-        <Consent
-          onBack={() => setScreen('procedures')}
-          onAccept={async (name) => {
-            if (isBackendConfigured) {
-              const updated = await api.updateMyProfile({
-                consent_at: new Date().toISOString(),
-                display_name: name,
-              });
-              setProfile(updated);
-            }
-            setScreen('institution');
-          }}
-        />
-      )}
-
-      {!bootError && screen === 'institution' && procedure && (
-        <InstitutionPick
-          procedure={procedure}
-          onBack={() => setScreen('procedures')}
-          onPick={async (inst) => {
-            setInstitution(inst);
-            const newRun = isBackendConfigured
-              ? await api.createRun({
-                  procedureId: procedure.id,
-                  institutionId: inst.id,
-                  totalSteps: procedure.steps.length,
-                }).catch(() => null)
-              : null;
-            setRun(newRun);
-            setScreen('guide');
-          }}
-        />
-      )}
-
-      {!bootError && screen === 'guide' && procedure && institution && (
-        <Guide
-          procedure={procedure}
-          institution={institution}
-          run={run}
-          onExit={goHome}
-          onFinish={() => setScreen('done')}
-        />
-      )}
-
-      {!bootError && screen === 'done' && procedure && (
-        <Done
-          procedure={procedure}
-          name={profile?.display_name}
-          onAgain={goHome}
-        />
-      )}
-
-      {!bootError && screen === 'invite' && (
-        <Invite
-          initialCode={inviteParam}
-          onBack={goHome}
-          onDone={goHome}
-        />
-      )}
-
-      {!bootError && screen === 'family' && (
-        <Family onBack={() => { window.location.href = '/'; }} />
-      )}
-
-      {!bootError && screen === 'privacy' && <Privacy onBack={goHome} />}
-    </div>
-  );
+  return [WELCOME];
 }
 
-// Pantalla de elección de institución (pequeña; vive aquí para mantener el flujo a la vista).
-function InstitutionPick({ procedure, onPick, onBack }) {
-  const list = INSTITUTIONS[procedure.institutionKey];
-  const question = {
-    bank: '¿En qué banco tienes tu cuenta?',
-    clinic: '¿En qué clínica o red te atiendes?',
-    afp: '¿En qué AFP estás?',
-  }[procedure.institutionKey];
+export default function App() {
+  const [messages, setMessages] = useState(loadMessages);
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [warning, setWarning] = useState('');
+  const [listening, setListening] = useState(false);
+  const [speakingIndex, setSpeakingIndex] = useState(null);
+  const [showPrivacy, setShowPrivacy] = useState(false);
+  const endRef = useRef(null);
+  const stopDictation = useRef(null);
+
+  useEffect(() => {
+    try {
+      const done = messages.filter((m) => !m.pending);
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(done));
+    } catch {
+      // Ignorar: guardar es solo una comodidad.
+    }
+    endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [messages]);
+
+  const ask = async (history) => {
+    setBusy(true);
+    setError('');
+    setMessages([...history, { role: 'assistant', content: '', pending: true }]);
+
+    const updateReply = (fn) => setMessages((prev) => {
+      const next = [...prev];
+      const last = next[next.length - 1];
+      next[next.length - 1] = { ...last, content: fn(last.content) };
+      return next;
+    });
+
+    try {
+      await streamReply(history.map(({ role, content }) => ({ role, content })), {
+        onText: (text) => updateReply((c) => c + text),
+        onReset: () => updateReply(() => ''),
+      });
+      setMessages((prev) => prev.map((m) => (m.pending ? { role: m.role, content: m.content } : m)));
+    } catch (err) {
+      // Se quita la respuesta incompleta para poder reintentar.
+      setMessages(history);
+      setError(err.message || 'No pudimos responder. Intente de nuevo.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const send = (text) => {
+    const value = text.trim();
+    if (!value || busy) return;
+    const sensitive = detectSensitive(value);
+    if (sensitive) {
+      setWarning(SENSITIVE_WARNING[sensitive]);
+      return;
+    }
+    setWarning('');
+    setInput('');
+    stopSpeaking();
+    setSpeakingIndex(null);
+    ask([...messages, { role: 'user', content: value }]);
+  };
+
+  const retry = () => {
+    if (messages[messages.length - 1]?.role === 'user') ask(messages);
+  };
+
+  const restart = () => {
+    if (messages.length > 1 && !window.confirm('¿Quiere borrar la conversación y empezar de nuevo?')) return;
+    stopSpeaking();
+    setSpeakingIndex(null);
+    setMessages([WELCOME]);
+    setError('');
+    setWarning('');
+    setInput('');
+  };
+
+  const toggleDictation = () => {
+    if (listening) {
+      stopDictation.current?.();
+      return;
+    }
+    setListening(true);
+    stopDictation.current = dictate({
+      onResult: (text) => setInput((prev) => (prev ? `${prev} ${text}` : text)),
+      onEnd: () => setListening(false),
+    });
+  };
+
+  const toggleSpeak = (index) => {
+    if (speakingIndex === index) {
+      stopSpeaking();
+      setSpeakingIndex(null);
+      return;
+    }
+    setSpeakingIndex(index);
+    speak(messages[index].content, { onEnd: () => setSpeakingIndex(null) });
+  };
+
+  if (showPrivacy) return <Privacy onBack={() => setShowPrivacy(false)} />;
+
+  const lastIsUser = messages[messages.length - 1]?.role === 'user';
 
   return (
-    <Screen title={question} onBack={onBack}>
-      <div className="space-y-3">
-        {list.map((inst) => (
-          <Button key={inst.id} variant="secondary" onClick={() => onPick(inst)}>
-            {inst.name}
-          </Button>
+    <div className="mx-auto flex h-dvh w-full max-w-2xl flex-col">
+      <header className="flex items-center justify-between gap-3 border-b border-ink/10 bg-paper px-4 py-3">
+        <h1 className="text-[1.5rem] font-extrabold">🤝 Guía Mayor</h1>
+        <button
+          type="button"
+          onClick={restart}
+          className="rounded-2xl border-2 border-ink/20 bg-card px-4 py-2 text-base font-bold"
+        >
+          Empezar de nuevo
+        </button>
+      </header>
+
+      <main className="flex-1 space-y-4 overflow-y-auto px-4 py-5" aria-live="polite">
+        {messages.map((m, i) => (
+          <ChatMessage
+            key={i}
+            message={m}
+            speaking={speakingIndex === i}
+            onSpeak={() => toggleSpeak(i)}
+          />
         ))}
-      </div>
-      <Card className="mt-6 text-lg text-ink-soft">
-        Si no encuentras tu institución, pide ayuda a tu familiar para revisar la página oficial.
-      </Card>
-    </Screen>
+
+        {messages.length === 1 && (
+          <div className="grid gap-3 pt-2">
+            {SUGGESTIONS.map((s) => (
+              <button
+                key={s.text}
+                type="button"
+                onClick={() => send(s.text)}
+                className="flex min-h-[64px] items-center gap-3 rounded-2xl border-[3px] border-brand bg-card px-5 py-3 text-left text-[1.15rem] font-bold text-brand"
+              >
+                <span className="text-3xl" aria-hidden="true">{s.icon}</span>
+                {s.text}
+              </button>
+            ))}
+            <p className="pt-2 text-center text-base text-ink-soft">
+              Nunca le pediremos claves ni números de tarjeta.{' '}
+              <button type="button" onClick={() => setShowPrivacy(true)} className="underline underline-offset-4">
+                Privacidad
+              </button>
+            </p>
+          </div>
+        )}
+
+        {error && (
+          <div>
+            <Notice tone="error">{error}</Notice>
+            {lastIsUser && (
+              <button
+                type="button"
+                onClick={retry}
+                className="w-full rounded-2xl border-[3px] border-brand bg-card px-5 py-3 text-lg font-bold text-brand"
+              >
+                Intentar de nuevo
+              </button>
+            )}
+          </div>
+        )}
+        <div ref={endRef} />
+      </main>
+
+      <footer className="border-t border-ink/10 bg-paper px-4 pb-4 pt-3">
+        {warning && <Notice tone="warn">🔒 {warning}</Notice>}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            send(input);
+          }}
+          className="flex items-end gap-2"
+        >
+          <label htmlFor="message" className="sr-only">Escriba su mensaje</label>
+          <textarea
+            id="message"
+            value={input}
+            onChange={(e) => {
+              setInput(e.target.value);
+              if (warning) setWarning('');
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                send(input);
+              }
+            }}
+            rows={2}
+            maxLength={MAX_MESSAGE_CHARS}
+            placeholder={listening ? 'Le escucho…' : 'Escriba aquí su pregunta'}
+            className="min-h-[64px] flex-1 resize-none rounded-2xl border-[3px] border-ink/30 bg-card px-4 py-3 text-[1.2rem]"
+          />
+          {canDictate && (
+            <button
+              type="button"
+              onClick={toggleDictation}
+              aria-label={listening ? 'Dejar de escuchar' : 'Hablar en vez de escribir'}
+              className={`flex h-[64px] w-[64px] shrink-0 items-center justify-center rounded-2xl border-[3px] text-3xl ${
+                listening ? 'border-help bg-help-soft' : 'border-brand bg-card'
+              }`}
+            >
+              {listening ? '⏹' : '🎤'}
+            </button>
+          )}
+          <button
+            type="submit"
+            disabled={busy || !input.trim()}
+            className="h-[64px] shrink-0 rounded-2xl bg-brand px-5 text-[1.2rem] font-bold text-white disabled:opacity-50"
+          >
+            {busy ? '…' : 'Enviar'}
+          </button>
+        </form>
+      </footer>
+    </div>
   );
 }
