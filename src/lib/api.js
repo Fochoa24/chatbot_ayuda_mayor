@@ -10,7 +10,11 @@ export async function streamReply(messages, { onText, onReset, signal }) {
 
   if (!res.ok || !res.body) {
     const data = await res.json().catch(() => ({}));
-    throw new Error(data.error || 'No pudimos conectarnos. Revise su internet e intente de nuevo.');
+    // Un 429 del firewall de Vercel no trae nuestro JSON.
+    const fallback = res.status === 429
+      ? 'Envió muchos mensajes seguidos. Espere unos minutos y siga.'
+      : 'No pudimos conectarnos. Revise su internet e intente de nuevo.';
+    throw new Error(data.error || fallback);
   }
 
   const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
